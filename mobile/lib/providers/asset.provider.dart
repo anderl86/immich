@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/providers/memory.provider.dart';
@@ -249,6 +252,17 @@ class AssetNotifier extends StateNotifier<bool> {
     return false;
   }
 
+  Future<bool> _supportsTrash() async {
+    // On Android with SDK equal or newer version 30 moveToTrash is supported
+    if (Platform.isAndroid) {
+      final info = await DeviceInfoPlugin().androidInfo;
+      if (info.version.sdkInt >= 30) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Future<List<String>> _deleteLocalAssets(
     Iterable<Asset> assetsToDelete,
   ) async {
@@ -256,10 +270,25 @@ class AssetNotifier extends StateNotifier<bool> {
         assetsToDelete.where((a) => a.isLocal).map((a) => a.localId!).toList();
     // Delete asset from device
     if (local.isNotEmpty) {
-      try {
-        return await PhotoManager.editor.deleteWithIds(local);
-      } catch (e, stack) {
-        log.severe("Failed to delete asset from device", e, stack);
+      if (await _supportsTrash()) {
+        // moveToTrash requires AssetEntity but only extracts id of it
+        final localAssetEntities = local
+            .map(
+              (id) => AssetEntity(id: id, typeInt: -1, width: -1, height: -1),
+            )
+            .toList();
+        try {
+          return await PhotoManager.editor.android
+              .moveToTrash(localAssetEntities);
+        } catch (e, stack) {
+          log.severe("Failed to trash asset on device", e, stack);
+        }
+      } else {
+        try {
+          return await PhotoManager.editor.deleteWithIds(local);
+        } catch (e, stack) {
+          log.severe("Failed to delete asset from device", e, stack);
+        }
       }
     }
     return [];
